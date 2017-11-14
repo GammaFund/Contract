@@ -435,6 +435,7 @@ contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
         // send token to the specified address
         balances[_recipientAddress] += _amount;
         bountyTokensCreated += _amount;
+        tokensCreated += _amount;
 
         // event
         evMgmtIssueBountyToken(msg.sender, msg.value, _recipientAddress, _amount, true);
