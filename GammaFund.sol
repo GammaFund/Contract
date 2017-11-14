@@ -24,11 +24,11 @@ contract GammaConfiguration {
     string public name = "GAMMA";
     string public symbol = "γ";
     uint8 public decimals = 0;
-    uint public maxBountyTokens = 2 * (10**6);
+    uint public maxBountyTokens = 8 * (10**4);  /* 80000 */
     uint public closingTimeExtensionPeriod = 30 days;
-    uint public minTokensToCreate = 10 * (10**6);
-    uint public maxTokensToCreate = 25 * (10**6);
-    uint public tokensPerTier = 5 * (10**6);
+    uint public minTokensToCreate =  4 * (10**5);  /* 400000 */
+    uint public maxTokensToCreate = 4 * (10**6);  /* 4000000 */
+    uint public tokensPerTier = 2 * (10**5);   /* 200000 */
     uint public lastKickoffDateBuffer = 304 days;
 
     uint public mgmtRewardPercentage = 20;
