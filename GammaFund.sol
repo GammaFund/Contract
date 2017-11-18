@@ -269,7 +269,7 @@ contract GovernanceInterface is ErrorHandler, GammaConfiguration {
     uint256 public bountyTokensCreated;
     uint public currentFiscalYear;
     uint public lastKickoffDate;
-    mapping (uint => bool) public isKickoffEnabled;
+    bool public isKickoffEnabled;
     bool public isFreezeEnabled;
     bool public isHarvestEnabled;
     bool public isDistributionInProgress;
@@ -568,16 +568,19 @@ contract GAMMAInterface is ErrorHandler, GammaConfiguration {
     address public managementBodyAddress;
 
     // 3 most important votings in blockchain
-    mapping (uint => mapping (address => uint)) public votedKickoff;
+    mapping (address => uint) public votedKickoff;
     mapping (address => uint) public votedFreeze;
     mapping (address => uint) public votedHarvest;
-    mapping (uint => uint256) public supportKickoffQuorum;
+
+    uint256 public supportKickoffQuorum;
     uint256 public supportFreezeQuorum;
     uint256 public supportHarvestQuorum;
+
     uint public totalInitialBalance;
     uint public annualManagementFee;
 
-    function voteToKickoffNewFiscalYear();
+    function mgmtKickoffNewFiscalYear();
+    function voteToKickoffFund();
     function voteToFreezeFund();
     function recallVoteToFreezeFund();
     function voteToHarvestFund();
@@ -651,59 +654,54 @@ contract GAMMA is GAMMAInterface, Token, TokenCreation {
     /*
      * Voting for some critical steps, on blockchain
      */
-    function voteToKickoffNewFiscalYear() onlyTokenHolders noEther onlyLocked {
-        // this is the only valid fiscal year parameter, so there's no point in letting the caller pass it in.
-        // Best case is they get it wrong and we throw, worst case is the get it wrong and there's some exploit
+    function mgmtKickoffNewFiscalYear() onlyManagementBody noEther onlyLocked {
+
         uint _fiscal = currentFiscalYear + 1;
 
-        if(!isKickoffEnabled[1]){  // if the first fiscal year is not kicked off yet
-            // accept voting
+        currentFiscalYear = _fiscal;
+        lastKickoffDate = now;
 
-        }else if(currentFiscalYear <= 3){  // if there was any kickoff() enabled before already
+        // transfer annual management fee from reservedWallet to mgmtWallet (external)
+        managementFeeWallet.payManagementBodyAmount(annualManagementFee);
 
-            if(lastKickoffDate + lastKickoffDateBuffer < now){ // 2 months from the end of the fiscal year
-                // accept voting
-            }else{
-                // we do not accept early kickoff
-                doThrow("kickOff:tooEarly");
-                return;
-            }
-        }else{
-            // do not accept kickoff anymore after the 4th year
-            doThrow("kickOff:4thYear");
+        evKickoff(msg.sender, msg.value, _fiscal);
+        evIssueManagementFee(msg.sender, msg.value, annualManagementFee, true);
+    }
+
+    function voteToKickoffFund() onlyTokenHolders noEther onlyLocked {
+
+        if(isKickoffEnabled){
+            doThrow("kickOff: already kicked off");
             return;
         }
+        // accept voting
 
-
-        supportKickoffQuorum[_fiscal] -= votedKickoff[_fiscal][msg.sender];
-        supportKickoffQuorum[_fiscal] += balances[msg.sender];
-        votedKickoff[_fiscal][msg.sender] = balances[msg.sender];
-
+        supportKickoffQuorum -= votedKickoff[msg.sender];
+        supportKickoffQuorum += balances[msg.sender];
+        votedKickoff[msg.sender] = balances[msg.sender];
 
         uint threshold = (kickoffQuorumPercent*(tokensCreated + bountyTokensCreated)) / 100;
-        if(supportKickoffQuorum[_fiscal] > threshold) {
-            if(_fiscal == 1){
-                // transfer fund in extraBalance to main account
-                extraBalanceWallet.returnBalanceToMainAccount();
+        if(supportKickoffQuorum > threshold) {
+            // transfer fund in extraBalance to main account
+            extraBalanceWallet.returnBalanceToMainAccount();
 
-                // reserve mgmtFeePercentage of whole fund to ManagementFeePoolWallet
-                totalInitialBalance = this.balance;
-                uint fundToReserve = (totalInitialBalance * mgmtFeePercentage) / 100;
-                annualManagementFee = fundToReserve / 4;
-                if(!managementFeeWallet.send(fundToReserve)){
-                    doThrow("kickoff:ManagementFeePoolWalletFail");
-                    return;
-                }
-
+            // reserve mgmtFeePercentage of whole fund to ManagementFeePoolWallet
+            totalInitialBalance = this.balance;
+            uint fundToReserve = (totalInitialBalance * mgmtFeePercentage) / 100;
+            annualManagementFee = fundToReserve / 4;
+            if(!managementFeeWallet.send(fundToReserve)){
+                doThrow("kickoff:ManagementFeePoolWalletFail");
+                return;
             }
-            isKickoffEnabled[_fiscal] = true;
-            currentFiscalYear = _fiscal;
+
+            isKickoffEnabled = true;
+            currentFiscalYear = 1;
             lastKickoffDate = now;
 
             // transfer annual management fee from reservedWallet to mgmtWallet (external)
             managementFeeWallet.payManagementBodyAmount(annualManagementFee);
 
-            evKickoff(msg.sender, msg.value, _fiscal);
+            evKickoff(msg.sender, msg.value, 1);
             evIssueManagementFee(msg.sender, msg.value, annualManagementFee, true);
         }
     }
@@ -751,7 +749,7 @@ contract GAMMA is GAMMAInterface, Token, TokenCreation {
         uint _amount
     ) onlyManagementBody hasEther returns (bool _success) {
 
-        if(!isKickoffEnabled[currentFiscalYear] || isFreezeEnabled || isHarvestEnabled){
+        if(!isKickoffEnabled || isFreezeEnabled || isHarvestEnabled){
             evMgmtInvestProject(msg.sender, msg.value, _projectWallet, _amount, false);
             return;
         }
@@ -774,12 +772,12 @@ contract GAMMA is GAMMAInterface, Token, TokenCreation {
 
         // Update kickoff voting record for the next fiscal year for an address, and the total quorum
         if(currentFiscalYear < 4){
-            if(votedKickoff[currentFiscalYear+1][msg.sender] > _value){
-                votedKickoff[currentFiscalYear+1][msg.sender] -= _value;
-                supportKickoffQuorum[currentFiscalYear+1] -= _value;
+            if(votedKickoff[msg.sender] > _value){
+                votedKickoff[msg.sender] -= _value;
+                supportKickoffQuorum -= _value;
             }else{
-                supportKickoffQuorum[currentFiscalYear+1] -= votedKickoff[currentFiscalYear+1][msg.sender];
-                votedKickoff[currentFiscalYear+1][msg.sender] = 0;
+                supportKickoffQuorum -= votedKickoff[msg.sender];
+                votedKickoff[msg.sender] = 0;
             }
         }
 
