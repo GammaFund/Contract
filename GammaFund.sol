@@ -385,7 +385,7 @@ contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
             doThrow("noWeiGiven");
             return;
         }
-        if (balances[msg.sender] > (tokensCreated + bountyTokensCreated)) {
+        if (balances[msg.sender] > tokensCreated) {
             doThrow("invalidTokenCount");
             return;
          }
@@ -431,7 +431,7 @@ contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
     function mgmtIssueBountyToken(
         address _recipientAddress,
         uint _amount
-    ) noEther onlyManagementBody onlyCanIssueBountyToken(_amount) returns (bool){
+    ) noEther onlyManagementBody onlyLocked onlyCanIssueBountyToken(_amount) returns (bool){
         // send token to the specified address
         balances[_recipientAddress] += _amount;
         bountyTokensCreated += _amount;
