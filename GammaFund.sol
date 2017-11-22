@@ -1,3 +1,4 @@
+pragma solidity ^0.4.0;
 /*
 This file is part of Gamma Fund Contract.
 
@@ -44,9 +45,7 @@ contract ErrorHandler {
     event evRecord(address msg_sender, uint msg_value, string message);
     function doThrow(string message) internal {
         evRecord(msg.sender, msg.value, message);
-        if(!isInTestMode){
-            throw;
-        }
+        require(isInTestMode);
     }
 }
 
@@ -62,15 +61,22 @@ contract TokenInterface is ErrorHandler {
 
     // Modifier that allows only token holders to trigger
     modifier onlyTokenHolders {
-        if (balanceOf(msg.sender) == 0) doThrow("onlyTokenHolders"); else {_}
+        require(balanceOf(msg.sender) > 0);
+        _;
     }
 }
 
 contract Token is TokenInterface {
     // Protects users by preventing the execution of method calls that
     // inadvertently also transferred ether
-    modifier noEther() {if (msg.value > 0) doThrow("noEther"); else{_}}
-    modifier hasEther() {if (msg.value <= 0) doThrow("hasEther"); else{_}}
+    modifier noEther() {
+        require(msg.value == 0);
+        _;
+    }
+    modifier hasEther() {
+        require(msg.value > 0);
+        _;
+    }
 
     function balanceOf(address _owner) constant returns (uint256 balance) {
         return balances[_owner];
@@ -98,13 +104,13 @@ contract OwnedAccount is ErrorHandler {
     event evPayOut(address msg_sender, uint msg_value, address indexed _recipient, uint _amount);
 
     modifier onlyOwner() {
-        if (msg.sender != owner) doThrow("onlyOwner");
-        else {_}
+        require(msg.sender == owner);
+        _;
     }
 
     modifier noEther() {
-        if (msg.value > 0) doThrow("noEther");
-        else {_}
+        require(msg.value == 0);
+        _;
     }
 
     function OwnedAccount(address _owner) {
@@ -123,10 +129,10 @@ contract OwnedAccount is ErrorHandler {
             evPayOut(msg.sender, msg.value, _recipient, _amount);
     }
 
-    function () returns (bool success) {
-        if (!acceptDeposits) throw;
-        return true;
-    }
+    // function () returns (bool success) {
+    //     if (!acceptDeposits) throw;
+    //     return true;
+    // }
 }
 
 contract ReturnWallet is OwnedAccount {
@@ -238,29 +244,51 @@ contract GovernanceInterface is ErrorHandler, GammaConfiguration {
     bool public isFundLocked;
     bool public isFundReleased;
 
-    modifier notLocked() {if (isFundLocked) doThrow("notLocked"); else {_}}
-    modifier onlyLocked() {if (!isFundLocked) doThrow("onlyLocked"); else {_}}
-    modifier notReleased() {if (isFundReleased) doThrow("notReleased"); else {_}}
-    modifier onlyHarvestEnabled() {if (!isHarvestEnabled) doThrow("onlyHarvestEnabled"); else {_}}
-    modifier onlyDistributionNotInProgress() {if (isDistributionInProgress) doThrow("onlyDistributionNotInProgress"); else {_}}
-    modifier onlyDistributionNotReady() {if (isDistributionReady) doThrow("onlyDistributionNotReady"); else {_}}
-    modifier onlyDistributionReady() {if (!isDistributionReady) doThrow("onlyDistributionReady"); else {_}}
+    modifier notLocked() {
+        require(!isFundLocked);
+        _;
+    }
+    modifier onlyLocked() {
+        require(isFundLocked);
+        _;
+    }
+    modifier notReleased() {
+        require(!isFundReleased);
+        _;
+    }
+    modifier onlyHarvestEnabled() {
+        require(isHarvestEnabled);
+        _;
+    }
+    modifier onlyDistributionNotInProgress() {
+        require(!isDistributionInProgress);
+        _;
+    }
+    modifier onlyDistributionNotReady() {
+        require(!isDistributionReady);
+        _;
+    }
+    modifier onlyDistributionReady() {
+        require(isDistributionReady);
+        _;
+    }
     modifier onlyCanIssueBountyToken(uint _amount) {
-        if (bountyTokensCreated + _amount > maxBountyTokens){
-            doThrow("hitMaxBounty");
-        }
-        else {_}
+        require(bountyTokensCreated + _amount <= maxBountyTokens);
+        _;
     }
     modifier onlyFinalFiscalYear() {
         // Only call harvest() in the final fiscal year
-        if (currentFiscalYear < 4) doThrow("currentFiscalYear<4"); else {_}
+        require(currentFiscalYear >= 4);
+        _;
     }
     modifier notFinalFiscalYear() {
         // Token holders cannot freeze fund at the 4th Fiscal Year after passing `kickoff(4)` voting
-        if (currentFiscalYear >= 4) doThrow("currentFiscalYear>=4"); else {_}
+        require(currentFiscalYear < 4);
+        _;
     }
     modifier onlyNotFrozen() {
-        if (isFreezeEnabled) doThrow("onlyNotFrozen"); else {_}
+        require(!isFreezeEnabled);
+        _;
     }
 
     bool public isDayThirtyChecked;
@@ -299,7 +327,8 @@ contract GovernanceInterface is ErrorHandler, GammaConfiguration {
 
 contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
     modifier onlyManagementBody {
-        if(msg.sender != address(managementBodyAddress)) {doThrow("onlyManagementBody");} else {_}
+        require(msg.sender == address(managementBodyAddress));
+        _;
     }
 
     function TokenCreation(
