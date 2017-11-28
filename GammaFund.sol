@@ -1,115 +1,147 @@
-pragma solidity ^0.4.0;
-/*
-This file is part of Gamma Fund Contract.
-
-Gamma Fund Contract is free software: you can redistribute it and/or modify
-it under the terms of the GNU lesser General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-Gamma Fund Contract is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU lesser General Public License for more details.
-
-You should have received a copy of the GNU lesser General Public License
-along with Gamma Fund Contract.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
-/*
- * Parent contract that contains all of the configurable parameters of the main contract.
+pragma solidity ^0.4.8;
+/**
+ * Overflow aware uint math functions.
+ *
+ * Inspired by https://github.com/MakerDAO/maker-otc/blob/master/contracts/simple_market.sol
  */
-contract GammaConfiguration {
-    uint public closingTime;
-    uint public weiPerInitialGAMMA = 10**16;
-    string public name = "GAMMA";
-    string public symbol = "γ";
-    uint8 public decimals = 0;
-    uint public maxBountyTokens = 8 * (10**4);  /* 80000 */
-    uint public closingTimeExtensionPeriod = 30 days;
-    uint public minTokensToCreate =  4 * (10**5);  /* 400000 */
-    uint public maxTokensToCreate = 4 * (10**6);  /* 4000000 */
-    uint public tokensPerTier = 2 * (10**5);   /* 200000 */
-    uint public lastKickoffDateBuffer = 304 days;
+contract SafeMath {
+  //internals
 
-    uint public mgmtRewardPercentage = 20;
-    uint public mgmtFeePercentage = 8;
+  function safeMul(uint a, uint b) internal returns (uint) {
+    uint c = a * b;
+    assert(a == 0 || c / a == b);
+    return c;
+  }
 
-    uint public harvestQuorumPercent = 20;
-    uint public freezeQuorumPercent = 50;
-    uint public kickoffQuorumPercent = 20;
+  function safeSub(uint a, uint b) internal returns (uint) {
+    assert(b <= a);
+    return a - b;
+  }
+
+  function safeAdd(uint a, uint b) internal returns (uint) {
+    uint c = a + b;
+    assert(c>=a && c>=b);
+    return c;
+  }
+
+  function assert(bool assertion) internal {
+    if (!assertion) throw;
+  }
 }
 
-contract ErrorHandler {
-    bool public isInTestMode = false;
-    event evRecord(address msg_sender, uint msg_value, string message);
-    function doThrow(string message) internal {
-        evRecord(msg.sender, msg.value, message);
-        require(isInTestMode);
-    }
+/**
+ * ERC 20 token
+ *
+ * https://github.com/ethereum/EIPs/issues/20
+ */
+contract Token {
+
+    /// @return total amount of tokens
+    function totalSupply() constant returns (uint256 supply) {}
+
+    /// @param _owner The address from which the balance will be retrieved
+    /// @return The balance
+    function balanceOf(address _owner) constant returns (uint256 balance) {}
+
+    /// @notice send `_value` token to `_to` from `msg.sender`
+    /// @param _to The address of the recipient
+    /// @param _value The amount of token to be transferred
+    /// @return Whether the transfer was successful or not
+    function transfer(address _to, uint256 _value) returns (bool success) {}
+
+    /// @notice send `_value` token to `_to` from `_from` on the condition it is approved by `_from`
+    /// @param _from The address of the sender
+    /// @param _to The address of the recipient
+    /// @param _value The amount of token to be transferred
+    /// @return Whether the transfer was successful or not
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {}
+
+    /// @notice `msg.sender` approves `_addr` to spend `_value` tokens
+    /// @param _spender The address of the account able to transfer the tokens
+    /// @param _value The amount of wei to be approved for transfer
+    /// @return Whether the approval was successful or not
+    function approve(address _spender, uint256 _value) returns (bool success) {}
+
+    /// @param _owner The address of the account owning tokens
+    /// @param _spender The address of the account able to transfer the tokens
+    /// @return Amount of remaining tokens allowed to spent
+    function allowance(address _owner, address _spender) constant returns (uint256 remaining) {}
+
+    event Transfer(address indexed _from, address indexed _to, uint256 _value);
+    event Approval(address indexed _owner, address indexed _spender, uint256 _value);
+
 }
 
-contract TokenInterface is ErrorHandler {
-    mapping (address => uint256) balances;
-    mapping (address => mapping (address => uint256)) allowed;
-    uint256 public tokensCreated;
+/**
+ * ERC 20 token
+ *
+ * https://github.com/ethereum/EIPs/issues/20
+ */
+contract StandardToken is Token {
 
-    function balanceOf(address _owner) constant returns (uint256 balance);
-    function transfer(address _to, uint256 _amount) returns (bool success);
-
-    event evTransfer(address msg_sender, uint msg_value, address indexed _from, address indexed _to, uint256 _amount);
-
-    // Modifier that allows only token holders to trigger
-    modifier onlyTokenHolders {
-        require(balanceOf(msg.sender) > 0);
-        _;
+    /**
+     * Reviewed:
+     * - Interger overflow = OK, checked
+     */
+    function transfer(address _to, uint256 _value) returns (bool success) {
+        //Default assumes totalSupply can't be over max (2^256 - 1).
+        //If your token leaves out totalSupply and can issue more tokens as time goes on, you need to check if it doesn't wrap.
+        //Replace the if with this one instead.
+        if (balances[msg.sender] >= _value && balances[_to] + _value > balances[_to]) {
+        //if (balances[msg.sender] >= _value && _value > 0) {
+            balances[msg.sender] -= _value;
+            balances[_to] += _value;
+            Transfer(msg.sender, _to, _value);
+            return true;
+        } else { return false; }
     }
-}
 
-contract Token is TokenInterface {
-    // Protects users by preventing the execution of method calls that
-    // inadvertently also transferred ether
-    modifier noEther() {
-        require(msg.value == 0);
-        _;
-    }
-    modifier hasEther() {
-        require(msg.value > 0);
-        _;
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {
+        //same as above. Replace this line with the following if you want to protect against wrapping uints.
+        if (balances[_from] >= _value && allowed[_from][msg.sender] >= _value && balances[_to] + _value > balances[_to]) {
+        //if (balances[_from] >= _value && allowed[_from][msg.sender] >= _value && _value > 0) {
+            balances[_to] += _value;
+            balances[_from] -= _value;
+            allowed[_from][msg.sender] -= _value;
+            Transfer(_from, _to, _value);
+            return true;
+        } else { return false; }
     }
 
     function balanceOf(address _owner) constant returns (uint256 balance) {
         return balances[_owner];
     }
 
-    function transfer(address _to, uint256 _amount) noEther returns (bool success) {
-        if (_amount <= 0) return false;
-        if (balances[msg.sender] < _amount) return false;
-        if (balances[_to] + _amount < balances[_to]) return false;
-
-        balances[msg.sender] -= _amount;
-        balances[_to] += _amount;
-
-        evTransfer(msg.sender, msg.value, msg.sender, _to, _amount);
-
+    function approve(address _spender, uint256 _value) returns (bool success) {
+        allowed[msg.sender][_spender] = _value;
+        Approval(msg.sender, _spender, _value);
         return true;
     }
+
+    function allowance(address _owner, address _spender) constant returns (uint256 remaining) {
+      return allowed[_owner][_spender];
+    }
+
+    mapping(address => uint256) balances;
+
+    mapping (address => mapping (address => uint256)) allowed;
+
+    uint256 public totalSupply;
+
 }
 
 
-contract OwnedAccount is ErrorHandler {
+contract OwnedAccount{
     address public owner;
     bool acceptDeposits = true;
-
-    event evPayOut(address msg_sender, uint msg_value, address indexed _recipient, uint _amount);
-
-    modifier onlyOwner() {
-        require(msg.sender == owner);
-        _;
-    }
+    event PayOut(address msg_sender, uint msg_value, address indexed _recipient, uint _amount);
 
     modifier noEther() {
         require(msg.value == 0);
+        _;
+    }
+    modifier onlyOwner() {
+        require(msg.sender == owner);
         _;
     }
 
@@ -117,38 +149,36 @@ contract OwnedAccount is ErrorHandler {
         owner = _owner;
     }
 
-    function payOutPercentage(address _recipient, uint _percent) internal onlyOwner noEther {
+    function payoutPercentage(address _recipient, uint _percent) internal onlyOwner noEther {
         payOutAmount(_recipient, (this.balance * _percent) / 100);
     }
 
     function payOutAmount(address _recipient, uint _amount) internal onlyOwner noEther {
         // send does not forward enough gas to see that this is a managed account call
-        if (!_recipient.call.value(_amount)())
-            doThrow("payOut:sendFailed");
-        else
-            evPayOut(msg.sender, msg.value, _recipient, _amount);
+        if (!_recipient.call.value(_amount)()){
+            throw;
+            // doThrow("payOut:sendFailed");
+        }else{
+            PayOut(msg.sender, msg.value, _recipient, _amount);
+        }
     }
-
-    // function () returns (bool success) {
-    //     if (!acceptDeposits) throw;
-    //     return true;
-    // }
 }
 
 contract ReturnWallet is OwnedAccount {
-    address public mgmtBodyWalletAddress;
+    address public mgmtAddress;
 
     bool public inDistributionMode;
     uint public amountToDistribute;
     uint public totalTokens;
     uint public weiPerToken;
 
-    function ReturnWallet(address _mgmtBodyWalletAddress) OwnedAccount(msg.sender) {
-        mgmtBodyWalletAddress = _mgmtBodyWalletAddress;
+    function ReturnWallet(address _mgmtAddress) OwnedAccount(msg.sender){
+        mgmtAddress = _mgmtAddress;
     }
 
     function payManagementBodyPercent(uint _percent) {
-        payOutPercentage(mgmtBodyWalletAddress, _percent);
+        // TODO
+        payOutPercentage(mgmtAddress, _percent);
     }
 
     function switchToDistributionMode(uint _totalTokens) onlyOwner {
@@ -160,89 +190,70 @@ contract ReturnWallet is OwnedAccount {
     }
 
     function payTokenHolderBasedOnTokenCount(address _tokenHolderAddress, uint _tokens) onlyOwner {
+        // TODO
         payOutAmount(_tokenHolderAddress, weiPerToken * _tokens);
     }
 }
 
-contract ExtraBalanceWallet is OwnedAccount {
-    address returnWalletAddress;
-    function ExtraBalanceWallet(address _returnWalletAddress) OwnedAccount(msg.sender) {
-        returnWalletAddress = _returnWalletAddress;
-    }
+/**
+ * Gamma Fund ICO contract.
+ *
+ * TO DO:
+ * Security criteria - evaluate against http://ethereum.stackexchange.com/questions/8551/methodological-security-review-of-a-smart-contract
+ *
+ *
+ */
+contract GammaToken is StandardToken, SafeMath {
 
-    function returnBalanceToMainAccount() {
-        acceptDeposits = false;
-        payOutAmount(owner, this.balance);
-    }
+    string public name = "Gamma Token";
+    string public symbol = "GAMMA";
+    uint public decimals = 18;
 
-    function returnAmountToMainAccount(uint _amount) {
-        payOutAmount(owner, _amount);
-    }
+    // Initial founder address (set in constructor)
+    // All deposited ETH will be instantly forwarded to this address.
+    // Address is a multisig wallet.
+    address public mgmt = 0x0;
 
-    function payBalanceToReturnWallet() {
-        acceptDeposits = false;
-        payOutAmount(returnWalletAddress, this.balance);
-    }
+    // signer address (for clickwrap agreement)
+    // see function() {} for comments
+    address public signer = 0x0;
 
-}
+    ReturnWallet public returnWallet;
 
-contract RewardWallet is OwnedAccount {
-    address public returnWalletAddress;
-    function RewardWallet(address _returnWalletAddress) OwnedAccount(msg.sender) {
-        returnWalletAddress = _returnWalletAddress;
-    }
+    uint public closingTime;
+    uint public weiPerInitialGammaToken = 10**16;
+    uint public maxBountyTokens = 80000;  /*  8 * (10**4)  */
+    uint public tokensPerTier = 200000;   /*  2 * (10**5)  */
+    uint public closingTimeExtensionPeriod = 30 days;
+    uint public minTokensToCreate = 400000;  /*  4 * (10**5)  */
+    uint public maxTokensToCreate = 4000000;  /*  4 * (10**6)  */
 
-    function payBalanceToReturnWallet() {
-        acceptDeposits = false;
-        payOutAmount(returnWalletAddress, this.balance);
-    }
-}
+    uint public harvestQuorumPercent = 20;
+    uint256 public supportHarvestQuorum;
+    mapping (address => uint) public votedHarvest;
+    bool public isHarvestEnabled;
 
-contract ManagementFeeWallet is OwnedAccount {
-    address public mgmtBodyAddress;
-    address public returnWalletAddress;
-    function ManagementFeeWallet(address _mgmtBodyAddress, address _returnWalletAddress) OwnedAccount(msg.sender) {
-        mgmtBodyAddress = _mgmtBodyAddress;
-        returnWalletAddress  = _returnWalletAddress;
-    }
+    uint public freezeQuorumPercent = 50;
+    uint256 public supportFreezeQuorum;
+    mapping (address => uint) public votedFreeze;
+    bool public isFreezeEnabled;
 
-    function payManagementBodyAmount(uint _amount) {
-        payOutAmount(mgmtBodyAddress, _amount);
-    }
-
-    function payBalanceToReturnWallet() {
-        acceptDeposits = false;
-        payOutAmount(returnWalletAddress, this.balance);
-    }
-}
-
-/*
- * Token Creation contract, similar to other organization,for issuing tokens and initialize
- * its ether fund.
-*/
-contract TokenCreationInterface is GammaConfiguration {
-
-    address public managementBodyAddress;
-
-    ExtraBalanceWallet public extraBalanceWallet;
-    mapping (address => uint256) weiGiven;
-    mapping (address => uint256) public taxPaid;
-
-    function createTokenProxy(address _tokenHolder) internal returns (bool success);
-    function refundMyIcoInvestment();
-    function divisor() constant returns (uint divisor);
-
-    event evMinTokensReached(address msg_sender, uint msg_value, uint value);
-    event evCreatedToken(address msg_sender, uint msg_value, address indexed to, uint amount);
-    event evRefund(address msg_sender, uint msg_value, address indexed to, uint value, bool result);
-}
-
-contract GovernanceInterface is ErrorHandler, GammaConfiguration {
-
-    // The variable indicating whether the fund has achieved the inital goal or not.
-    // This value is automatically set, and CANNOT be reversed.
+    bool public halted = false; //the management address can set this to true to halt the crowdsale due to emergency
+    bool public isDayThirtyChecked;
+    bool public isDaySixtyChecked;
+    bool public isDistributionInProgress;
+    bool public isDistributionReady;
     bool public isFundLocked;
-    bool public isFundReleased;
+    // bool public isFundReleased;
+
+    uint public icoTokenSupply = 0; //this will keep track of the token supply created during the crowdsale
+    uint public icoEtherRaised = 0; //this will keep track of the Ether raised during the crowdsale
+    uint256 public bountyTokensCreated;
+
+    event Buy(address indexed sender, uint eth, uint fbt);
+    event Refund(address indexed sender, address to, uint eth);
+    event Freeze(address indexed sender, uint eth);
+    event Harvest(address indexed sender, uint eth);
 
     modifier notLocked() {
         require(!isFundLocked);
@@ -250,18 +261,6 @@ contract GovernanceInterface is ErrorHandler, GammaConfiguration {
     }
     modifier onlyLocked() {
         require(isFundLocked);
-        _;
-    }
-    modifier notReleased() {
-        require(!isFundReleased);
-        _;
-    }
-    modifier onlyHarvestEnabled() {
-        require(isHarvestEnabled);
-        _;
-    }
-    modifier onlyDistributionNotInProgress() {
-        require(!isDistributionInProgress);
         _;
     }
     modifier onlyDistributionNotReady() {
@@ -272,189 +271,61 @@ contract GovernanceInterface is ErrorHandler, GammaConfiguration {
         require(isDistributionReady);
         _;
     }
+    modifier onlyManagementBody {
+        require(msg.sender == address(mgmt));
+        _;
+    }
+    modifier onlyTokenHolders {
+        require(balanceOf(msg.sender) > 0);
+        _;
+    }
+    modifier noEther() {
+        require(msg.value == 0);
+        _;
+    }
+    modifier hasEther() {
+        require(msg.value > 0);
+        _;
+    }
     modifier onlyCanIssueBountyToken(uint _amount) {
         require(bountyTokensCreated + _amount <= maxBountyTokens);
         _;
     }
-    modifier onlyFinalFiscalYear() {
-        // Only call harvest() in the final fiscal year
-        require(currentFiscalYear >= 4);
-        _;
-    }
-    modifier notFinalFiscalYear() {
-        // Token holders cannot freeze fund at the 4th Fiscal Year after passing `kickoff(4)` voting
-        require(currentFiscalYear < 4);
-        _;
-    }
-    modifier onlyNotFrozen() {
-        require(!isFreezeEnabled);
-        _;
+
+
+
+    function GammaToken(address managementAddressInput, address signerInput) {
+        mgmt = managementAddressInput;
+        signer = signerInput;
+
+        returnWallet = new ReturnWallet(mgmt);
     }
 
-    bool public isDayThirtyChecked;
-    bool public isDaySixtyChecked;
+    function getCurrentTier() constant returns (uint8) {
+        uint8 tier = (uint8) (totalSupply / tokensPerTier);
+        return (tier > 4) ? 4 : tier;
+    }
 
-    uint256 public bountyTokensCreated;
-    uint public currentFiscalYear;
-    uint public lastKickoffDate;
-    bool public isKickoffEnabled;
-    bool public isFreezeEnabled;
-    bool public isHarvestEnabled;
-    bool public isDistributionInProgress;
-    bool public isDistributionReady;
+    function pricePerTokenAtCurrentTier() constant returns (uint) {
 
-    ReturnWallet public returnWallet;
-    RewardWallet public rewardWallet;
-    ManagementFeeWallet public managementFeeWallet;
+        // Quantity divisor model: based on total quantity of coins issued
+        // Price ranged from 1.0 to 1.20 Ether for all Gamma Tokens with a 0.05 ETH increase for each tier
 
-    // define the governance of this organization and critical functions
-    function mgmtIssueBountyToken(address _recipientAddress, uint _amount) returns (bool);
-    function mgmtDistribute();
+        // The number of (base unit) tokens per wei is calculated
+        // as `msg.value` * 100 / `divisor`,  where divisor is `(100 + getCurrentTier() * 5)`
 
-    function mgmtInvestProject(
-        address _projectWallet,
+        return weiPerInitialGammaToken * (100 + getCurrentTier() * 5) / 100;
+    }
+
+    function mgmtMoveFund(
+        address _recipientAddress,
         uint _amount
-    ) returns (bool);
+    ) noEther onlyManagementBody onlyLocked onlyDistributionNotReady {
 
-    event evIssueManagementFee(address msg_sender, uint msg_value, uint _amount, bool _success);
-    event evMgmtIssueBountyToken(address msg_sender, uint msg_value, address _recipientAddress, uint _amount, bool _success);
-    event evMgmtDistributed(address msg_sender, uint msg_value, uint256 _amount, bool _success);
-    event evMgmtInvestProject(address msg_sender, uint msg_value, address _projectWallet, uint _amount, bool result);
-    event evLockFund(address msg_sender, uint msg_value);
-    event evReleaseFund(address msg_sender, uint msg_value);
-}
-
-
-contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
-    modifier onlyManagementBody {
-        require(msg.sender == address(managementBodyAddress));
-        _;
     }
 
-    function TokenCreation(
-        address _managementBodyAddress,
-        uint _closingTime) {
+    function mgmtDistributeReturn() noEther onlyManagementBody onlyLocked onlyDistributionNotReady {
 
-        managementBodyAddress = _managementBodyAddress;
-        closingTime = _closingTime;
-    }
-
-    function createTokenProxy(address _tokenHolder) internal notLocked notReleased hasEther returns (bool success) {
-
-        // Business logic (but no state changes)
-        // setup transaction details
-        uint tokensSupplied = 0;
-        uint weiAccepted = 0;
-        bool wasMinTokensReached = isMinTokensReached();
-
-        var weiPerLatestGAMMA = weiPerInitialGAMMA * divisor() / 100;
-        uint remainingWei = msg.value;
-        uint tokensAvailable = tokensAvailableAtCurrentTier();
-        if (tokensAvailable == 0) {
-            doThrow("noTokensToSell");
-            return false;
-        }
-
-        // Sell tokens in batches based on the current price.
-        while (remainingWei >= weiPerLatestGAMMA) {
-            uint tokensRequested = remainingWei / weiPerLatestGAMMA;
-            uint tokensToSellInBatch = min(tokensAvailable, tokensRequested);
-
-            // special case.  Allow the last purchase to go over the max
-            if (tokensAvailable == 0 && tokensCreated == maxTokensToCreate) {
-                tokensToSellInBatch = tokensRequested;
-            }
-
-            uint priceForBatch = tokensToSellInBatch * weiPerLatestGAMMA;
-
-            // track to total wei accepted and total tokens supplied
-            weiAccepted += priceForBatch;
-            tokensSupplied += tokensToSellInBatch;
-
-            // update state
-            balances[_tokenHolder] += tokensToSellInBatch;
-            tokensCreated += tokensToSellInBatch;
-            weiGiven[_tokenHolder] += priceForBatch;
-
-            // update dependent values (state has changed)
-            weiPerLatestGAMMA = weiPerInitialGAMMA * divisor() / 100;
-            remainingWei = msg.value - weiAccepted;
-            tokensAvailable = tokensAvailableAtCurrentTier();
-        }
-
-        // the caller will still pay this amount, even though it didn't buy any tokens.
-        weiGiven[_tokenHolder] += remainingWei;
-
-        // when the caller is paying more than 10**16 wei (0.01 Ether) per token, the extra is basically a tax.
-        uint256 totalTaxLevied = weiAccepted - tokensSupplied * weiPerInitialGAMMA;
-        taxPaid[_tokenHolder] += totalTaxLevied;
-
-        // State Changes (no external calls)
-        tryToLockFund();
-
-        // External calls
-        if (totalTaxLevied > 0) {
-            if (!extraBalanceWallet.send(totalTaxLevied)){
-                doThrow("extraBalance:sendFail");
-                return;
-            }
-        }
-
-        // Events.  Safe to publish these now that we know it all worked
-        evCreatedToken(msg.sender, msg.value, _tokenHolder, tokensSupplied);
-        if (!wasMinTokensReached && isMinTokensReached()) evMinTokensReached(msg.sender, msg.value, tokensCreated);
-        if (isFundLocked) evLockFund(msg.sender, msg.value);
-        if (isFundReleased) evReleaseFund(msg.sender, msg.value);
-        return true;
-    }
-
-    function refundMyIcoInvestment() noEther notLocked onlyTokenHolders {
-        // 1: Preconditions
-        if (weiGiven[msg.sender] == 0) {
-            doThrow("noWeiGiven");
-            return;
-        }
-        if (balances[msg.sender] > tokensCreated) {
-            doThrow("invalidTokenCount");
-            return;
-         }
-
-        // 2: Business logic
-        bool wasMinTokensReached = isMinTokensReached();
-        var tmpWeiGiven = weiGiven[msg.sender];
-        var tmpTaxPaidBySender = taxPaid[msg.sender];
-        var tmpSenderBalance = balances[msg.sender];
-
-        var amountToRefund = tmpWeiGiven;
-
-        // 3: state changes.
-        balances[msg.sender] = 0;
-        weiGiven[msg.sender] = 0;
-        taxPaid[msg.sender] = 0;
-        tokensCreated -= tmpSenderBalance;
-
-        // 4: external calls
-        // Pull taxes paid back into this contract (they would have been paid into the extraBalance account)
-        extraBalanceWallet.returnAmountToMainAccount(tmpTaxPaidBySender);
-
-        // If that works, then do a refund
-        if (!msg.sender.send(amountToRefund)) {
-            evRefund(msg.sender, msg.value, msg.sender, amountToRefund, false);
-            doThrow("refund:SendFailed");
-            return;
-        }
-
-        evRefund(msg.sender, msg.value, msg.sender, amountToRefund, true);
-        if (!wasMinTokensReached && isMinTokensReached()) evMinTokensReached(msg.sender, msg.value, tokensCreated);
-    }
-
-    // Using a function rather than a state variable, as it reduces the risk of inconsistent state
-    function isMinTokensReached() constant returns (bool) {
-        return tokensCreated >= minTokensToCreate;
-    }
-
-    function isMaxTokensReached() constant returns (bool) {
-        return tokensCreated >= maxTokensToCreate;
     }
 
     function mgmtIssueBountyToken(
@@ -466,376 +337,172 @@ contract TokenCreation is TokenCreationInterface, Token, GovernanceInterface {
         bountyTokensCreated += _amount;
 
         // event
-        evMgmtIssueBountyToken(msg.sender, msg.value, _recipientAddress, _amount, true);
+        // evMgmtIssueBountyToken(msg.sender, msg.value, _recipientAddress, _amount, true);
 
     }
 
-    function mgmtDistribute() onlyManagementBody hasEther onlyHarvestEnabled onlyDistributionNotReady {
-        distributeDownstream(mgmtRewardPercentage);
-    }
-
-    function distributeDownstream(uint _mgmtPercentage) internal onlyDistributionNotInProgress {
-
-        // transfer all balance from the following accounts
-        // (1) GAMMA main account,
-        // (2) managementFeeWallet,
-        // (3) rewardWallet
-        // (4) extraBalanceWallet
-        // to returnWallet
-
-        // And allocate _mgmtPercentage of the fund to ManagementBody
-
-        // State changes first (even though it feels backwards)
-        isDistributionInProgress = true;
-        isDistributionReady = true;
-
-        payBalanceToReturnWallet();
-        managementFeeWallet.payBalanceToReturnWallet();
-        rewardWallet.payBalanceToReturnWallet();
-        extraBalanceWallet.payBalanceToReturnWallet();
-
-        // transfer _mgmtPercentage of returns to mgmt Wallet
-        if (_mgmtPercentage > 0) returnWallet.payManagementBodyPercent(_mgmtPercentage);
-        returnWallet.switchToDistributionMode(tokensCreated + bountyTokensCreated);
-
-        // Token holder can claim the remaining fund (the total amount harvested/ to be distributed) starting from here
-        evMgmtDistributed(msg.sender, msg.value, returnWallet.balance, true);
-        isDistributionInProgress = false;
-    }
-
-    function payBalanceToReturnWallet() internal {
-        if (!returnWallet.send(this.balance))
-            doThrow("payBalanceToReturnWallet:sendFailed");
-            return;
-    }
-
-    function min(uint a, uint b) constant internal returns (uint) {
-        return (a < b) ? a : b;
-    }
-
-    function tryToLockFund() internal {
-
-        if (isFundReleased) {
-            // Do not change the state anymore
-            return;
-        }
-
-        // Case A
-        isFundLocked = isMaxTokensReached();
-
-        // if we've reached the 30 day mark, try to lock the fund
-        if (!isFundLocked && !isDayThirtyChecked && (now >= closingTime)) {
-            if (isMinTokensReached()) {
-                // Case B
-                isFundLocked = true;
-            }
-            isDayThirtyChecked = true;
-        }
-
-        // if we've reached the 60 day mark, try to lock the fund
-        if (!isFundLocked && !isDaySixtyChecked && (now >= (closingTime + closingTimeExtensionPeriod))) {
-            if (isMinTokensReached()) {
-                // Case C
-                isFundLocked = true;
-            }
-            isDaySixtyChecked = true;
-        }
-
-        if (isDaySixtyChecked && !isMinTokensReached()) {
-            // Case D
-            // Mark the release state. No fund should be accepted anymore
-            isFundReleased = true;
-        }
-    }
-
-    function tokensAvailableAtTierInternal(uint8 _currentTier, uint _tokensPerTier, uint _tokensCreated) constant returns (uint) {
-        uint tierThreshold = (_currentTier+1) * _tokensPerTier;
-
-        // never go above maxTokensToCreate, which could happen if the max is not a multiple of _tokensPerTier
-        if (tierThreshold > maxTokensToCreate) {
-            tierThreshold = maxTokensToCreate;
-        }
-
-        // this can happen on the final purchase in the last tier
-        if (_tokensCreated > tierThreshold) {
-            return 0;
-        }
-
-        return tierThreshold - _tokensCreated;
-    }
-
-    function tokensAvailableAtCurrentTier() constant returns (uint) {
-        return tokensAvailableAtTierInternal(getCurrentTier(), tokensPerTier, tokensCreated);
-    }
-
-    function getCurrentTier() constant returns (uint8) {
-        uint8 tier = (uint8) (tokensCreated / tokensPerTier);
-        return (tier > 4) ? 4 : tier;
-    }
-
-    function pricePerTokenAtCurrentTier() constant returns (uint) {
-        return weiPerInitialGAMMA * divisor() / 100;
-    }
-
-    function divisor() constant returns (uint divisor) {
-
-        // Quantity divisor model: based on total quantity of coins issued
-        // Price ranged from 1.0 to 1.20 Ether for all GAMMA Tokens with a 0.05 ETH increase for each tier
-
-        // The number of (base unit) tokens per wei is calculated
-        // as `msg.value` * 100 / `divisor`
-
-        return 100 + getCurrentTier() * 5;
-    }
-}
-
-
-contract GAMMAInterface is ErrorHandler, GammaConfiguration {
-
-    // we do not have grace period. Once the goal is reached, the fund is secured
-
-    address public managementBodyAddress;
-
-    // 3 most important votings in blockchain
-    mapping (address => uint) public votedKickoff;
-    mapping (address => uint) public votedFreeze;
-    mapping (address => uint) public votedHarvest;
-
-    uint256 public supportKickoffQuorum;
-    uint256 public supportFreezeQuorum;
-    uint256 public supportHarvestQuorum;
-
-    uint public totalInitialBalance;
-    uint public annualManagementFee;
-
-    function mgmtKickoffNewFiscalYear();
-    function voteToKickoffFund();
-    function voteToFreezeFund();
-    function recallVoteToFreezeFund();
-    function voteToHarvestFund();
-
-    function collectMyReturn();
-
-    // Trigger the following events when the voting result is available
-    event evKickoff(address msg_sender, uint msg_value, uint _fiscal);
-    event evFreeze(address msg_sender, uint msg_value);
-    event evHarvest(address msg_sender, uint msg_value);
-}
-
-
-
-// The GAMMA contract itself
-contract GAMMA is GAMMAInterface, Token, TokenCreation {
-
-    function GAMMA(
-        address _managementBodyAddress,
-        uint _closingTime,
-        uint _closingTimeExtensionPeriod,
-        uint _lastKickoffDateBuffer,
-        uint _minTokensToCreate,
-        uint _maxTokensToCreate,
-        uint _tokensPerTier,
-        bool _isInTestMode
-    ) TokenCreation(_managementBodyAddress, _closingTime) {
-
-        managementBodyAddress = _managementBodyAddress;
-        closingTimeExtensionPeriod = _closingTimeExtensionPeriod;
-        lastKickoffDateBuffer = _lastKickoffDateBuffer;
-
-        minTokensToCreate = _minTokensToCreate;
-        maxTokensToCreate = _maxTokensToCreate;
-        tokensPerTier = _tokensPerTier;
-        isInTestMode = _isInTestMode;
-
-        returnWallet = new ReturnWallet(managementBodyAddress);
-        rewardWallet = new RewardWallet(address(returnWallet));
-        managementFeeWallet = new ManagementFeeWallet(managementBodyAddress, address(returnWallet));
-        extraBalanceWallet = new ExtraBalanceWallet(address(returnWallet));
-
-        if (address(extraBalanceWallet) == 0)
-            doThrow("extraBalanceWallet:0");
-        if (address(returnWallet) == 0)
-            doThrow("returnWallet:0");
-        if (address(rewardWallet) == 0)
-            doThrow("rewardWallet:0");
-        if (address(managementFeeWallet) == 0)
-            doThrow("managementFeeWallet:0");
-    }
-
-    function () returns (bool success) {
-        if (!isFromManagedAccount()) {
-            // We do not accept donation here. Any extra amount sent to us after fund locking process, will be refunded
-            return createTokenProxy(msg.sender);
-        }
-        else {
-            evRecord(msg.sender, msg.value, "Recevied ether from ManagedAccount");
-            return true;
-        }
-    }
-
-    function isFromManagedAccount() internal returns (bool) {
-        return msg.sender == address(extraBalanceWallet)
-            || msg.sender == address(returnWallet)
-            || msg.sender == address(rewardWallet)
-            || msg.sender == address(managementFeeWallet);
-    }
-
-    /*
-     * Voting for some critical steps, on blockchain
+    /**
+     * Emergency Stop ICO.
+     *
      */
-    function mgmtKickoffNewFiscalYear() onlyManagementBody noEther onlyLocked {
-
-        uint _fiscal = currentFiscalYear + 1;
-
-        currentFiscalYear = _fiscal;
-        lastKickoffDate = now;
-
-        // transfer annual management fee from reservedWallet to mgmtWallet (external)
-        managementFeeWallet.payManagementBodyAmount(annualManagementFee);
-
-        evKickoff(msg.sender, msg.value, _fiscal);
-        evIssueManagementFee(msg.sender, msg.value, annualManagementFee, true);
+    function mgmtHaltIco() onlyManagementBody{
+        halted = true;
     }
 
-    function voteToKickoffFund() onlyTokenHolders noEther onlyLocked {
-
-        if(isKickoffEnabled){
-            doThrow("kickOff: already kicked off");
-            return;
-        }
-        // accept voting
-
-        supportKickoffQuorum -= votedKickoff[msg.sender];
-        supportKickoffQuorum += balances[msg.sender];
-        votedKickoff[msg.sender] = balances[msg.sender];
-
-        uint threshold = (kickoffQuorumPercent*(tokensCreated + bountyTokensCreated)) / 100;
-        if(supportKickoffQuorum > threshold) {
-            // transfer fund in extraBalance to main account
-            extraBalanceWallet.returnBalanceToMainAccount();
-
-            // reserve mgmtFeePercentage of whole fund to ManagementFeePoolWallet
-            totalInitialBalance = this.balance;
-            uint fundToReserve = (totalInitialBalance * mgmtFeePercentage) / 100;
-            annualManagementFee = fundToReserve / 4;
-            if(!managementFeeWallet.send(fundToReserve)){
-                doThrow("kickoff:ManagementFeePoolWalletFail");
-                return;
-            }
-
-            isKickoffEnabled = true;
-            currentFiscalYear = 1;
-            lastKickoffDate = now;
-
-            // transfer annual management fee from reservedWallet to mgmtWallet (external)
-            managementFeeWallet.payManagementBodyAmount(annualManagementFee);
-
-            evKickoff(msg.sender, msg.value, 1);
-            evIssueManagementFee(msg.sender, msg.value, annualManagementFee, true);
-        }
+    function mgmtUnhaltIco() onlyManagementBody{
+        halted = false;
     }
 
-    function voteToFreezeFund() onlyTokenHolders noEther onlyLocked notFinalFiscalYear onlyDistributionNotInProgress {
+    /**
+     * Post-ICO operations
+     *
+     */
+    function voteToFreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
 
         supportFreezeQuorum -= votedFreeze[msg.sender];
         supportFreezeQuorum += balances[msg.sender];
         votedFreeze[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((tokensCreated + bountyTokensCreated) * freezeQuorumPercent) / 100;
+        uint threshold = ((icoTokenSupply + bountyTokensCreated) * freezeQuorumPercent) / 100;
         if(supportFreezeQuorum > threshold){
             isFreezeEnabled = true;
-            distributeDownstream(0);
-            evFreeze(msg.sender, msg.value);
+            _executeFreezeFund();
+            Freeze(msg.sender, msg.value);
         }
     }
 
-    function recallVoteToFreezeFund() onlyTokenHolders onlyNotFrozen noEther {
+    function _executeFreezeFund() internal onlyDistributionNotReady {
+        // TODO
+    }
+
+    function voteToUnfreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
+
         supportFreezeQuorum -= votedFreeze[msg.sender];
         votedFreeze[msg.sender] = 0;
     }
 
-    function voteToHarvestFund() onlyTokenHolders noEther onlyLocked onlyFinalFiscalYear {
+    function voteToHarvest() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
 
         supportHarvestQuorum -= votedHarvest[msg.sender];
         supportHarvestQuorum += balances[msg.sender];
         votedHarvest[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((tokensCreated + bountyTokensCreated) * harvestQuorumPercent) / 100;
+        uint threshold = ((icoTokenSupply + bountyTokensCreated) * harvestQuorumPercent) / 100;
         if(supportHarvestQuorum > threshold) {
             isHarvestEnabled = true;
-            evHarvest(msg.sender, msg.value);
+            Harvest(msg.sender, msg.value);
         }
     }
 
-    function collectMyReturn() onlyTokenHolders noEther onlyDistributionReady {
+    function harvestMyReturn() noEther onlyTokenHolders onlyLocked onlyDistributionReady {
+
         uint tokens = balances[msg.sender];
         balances[msg.sender] = 0;
+
+        // TODO
         returnWallet.payTokenHolderBasedOnTokenCount(msg.sender, tokens);
     }
 
-    function mgmtInvestProject(
-        address _projectWallet,
-        uint _amount
-    ) onlyManagementBody hasEther returns (bool _success) {
 
-        if(!isKickoffEnabled || isFreezeEnabled || isHarvestEnabled){
-            evMgmtInvestProject(msg.sender, msg.value, _projectWallet, _amount, false);
-            return;
-        }
-
-        if(_amount >= this.balance){
-            doThrow("failed:mgmtInvestProject: amount >= actualBalance");
-            return;
-        }
-
-        // send the balance (_amount) to _projectWallet
-        if (!_projectWallet.call.value(_amount)()) {
-            doThrow("failed:mgmtInvestProject: cannot send to _projectWallet");
-            return;
-        }
-
-        evMgmtInvestProject(msg.sender, msg.value, _projectWallet, _amount, true);
+    // Buy entry point
+    function buy(uint8 v, bytes32 r, bytes32 s) {
+        buyRecipient(msg.sender, v, r, s);
     }
 
+    /**
+     * Main token buy function.
+     *
+     * Buy for the sender itself or buy on the behalf of somebody else (third party address).
+     *
+     * Security review
+     *
+     * - Integer math: ok - using SafeMath
+     *
+     * - halt flag added - ok
+     *
+     * Applicable tests:
+     *
+     * TODO - Test halting, buying, and failing
+     * TODO - Test buying on behalf of a recipient
+     * TODO - Test buy
+     * TODO - Test unhalting, buying, and succeeding
+     * TODO - Test buying after the sale ends
+     *
+     */
+    function buyRecipient(address recipient, uint8 v, bytes32 r, bytes32 s) {
+        bytes32 hash = sha256(msg.sender);
+        if (ecrecover(hash,v,r,s) != signer) throw;
+        if (halted) throw;
+        // if (safeAdd(icoEtherRaised, msg.value) > etherCap || halted) throw;
+        uint tokens = safeMul(msg.value, pricePerTokenAtCurrentTier());
+        balances[recipient] = safeAdd(balances[recipient], tokens);
+        totalSupply = safeAdd(totalSupply, tokens);
+        icoEtherRaised = safeAdd(icoEtherRaised, msg.value);
+
+        if (safeAdd(totalSupply, tokens) > maxTokensToCreate) throw;
+
+        // TODO: Is there a pitfall of forwarding message value like this
+        // TODO: Different address for mgmt deposits and mgmt operations (halt, unhalt)
+        // as mgmt opeations might be easier to perform from normal geth account
+        if (!mgmt.call.value(msg.value)()) throw; //immediately send Ether to mgmt address
+
+        Buy(recipient, msg.value, tokens);
+    }
+
+    /**
+     * Emergency Stop ICO.
+     *
+     *  Applicable tests:
+     *
+     * TODO - Test unhalting, buying, and succeeding
+     */
+    function halt() {
+        if (msg.sender != mgmt) throw;
+        halted = true;
+    }
+
+    function unhalt() {
+        if (msg.sender != mgmt) throw;
+        halted = false;
+    }
+
+    /**
+     * ERC 20 Standard Token interface transfer function
+     *
+     * Prevent transfers until freeze period is over.
+     *
+     * Applicable tests:
+     *
+     * TODO - Test restricted early transfer
+     * TODO - Test transfer after restricted period
+     */
     function transfer(address _to, uint256 _value) returns (bool success) {
-
-        // Update kickoff voting record for the next fiscal year for an address, and the total quorum
-        if(currentFiscalYear < 4){
-            if(votedKickoff[msg.sender] > _value){
-                votedKickoff[msg.sender] -= _value;
-                supportKickoffQuorum -= _value;
-            }else{
-                supportKickoffQuorum -= votedKickoff[msg.sender];
-                votedKickoff[msg.sender] = 0;
-            }
-        }
-
-        // Update Freeze and Harvest voting records for an address, and the total quorum
-        if(votedFreeze[msg.sender] > _value){
-            votedFreeze[msg.sender] -= _value;
-            supportFreezeQuorum -= _value;
-        }else{
-            supportFreezeQuorum -= votedFreeze[msg.sender];
-            votedFreeze[msg.sender] = 0;
-        }
-
-        if(votedHarvest[msg.sender] > _value){
-            votedHarvest[msg.sender] -= _value;
-            supportHarvestQuorum -= _value;
-        }else{
-            supportHarvestQuorum -= votedHarvest[msg.sender];
-            votedHarvest[msg.sender] = 0;
-        }
-
-        if (isFundLocked && super.transfer(_to, _value)) {
-            return true;
-        } else {
-            if(!isFundLocked){
-                doThrow("failed:transfer: isFundLocked is false");
-            }else{
-                doThrow("failed:transfer: cannot send send to _projectWallet");
-            }
-            return;
-        }
+        if (!isFundLocked && msg.sender != mgmt) throw;
+        return super.transfer(_to, _value);
     }
+    /**
+     * ERC 20 Standard Token interface transfer function
+     *
+     * Prevent transfers until freeze period is over.
+     */
+    function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {
+        if (!isFundLocked && msg.sender != mgmt) throw;
+        return super.transferFrom(_from, _to, _value);
+    }
+
+    /**
+     * Do not allow direct deposits.
+     *
+     * All crowdsale depositors must have read the legal agreement.
+     * This is confirmed by having them signing the terms of service on the website.
+     * The give their crowdsale Ethereum source address on the website.
+     * Website signs this address using crowdsale private key (different from founders key).
+     * buy() takes this signature as input and rejects all deposits that do not have
+     * signature you receive after reading terms of service.
+     *
+     */
+    function() {
+        throw;
+    }
+
 }
