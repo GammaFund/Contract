@@ -131,70 +131,6 @@ contract StandardToken is Token {
 }
 
 
-contract OwnedAccount{
-    address public owner;
-    bool acceptDeposits = true;
-    event PayOut(address msg_sender, uint msg_value, address indexed _recipient, uint _amount);
-
-    modifier noEther() {
-        require(msg.value == 0);
-        _;
-    }
-    modifier onlyOwner() {
-        require(msg.sender == owner);
-        _;
-    }
-
-    function OwnedAccount(address _owner) {
-        owner = _owner;
-    }
-
-    function payoutPercentage(address _recipient, uint _percent) internal onlyOwner noEther {
-        payOutAmount(_recipient, (this.balance * _percent) / 100);
-    }
-
-    function payOutAmount(address _recipient, uint _amount) internal onlyOwner noEther {
-        // send does not forward enough gas to see that this is a managed account call
-        if (!_recipient.call.value(_amount)()){
-            throw;
-            // doThrow("payOut:sendFailed");
-        }else{
-            PayOut(msg.sender, msg.value, _recipient, _amount);
-        }
-    }
-}
-
-contract ReturnWallet is OwnedAccount {
-    address public mgmtAddress;
-
-    bool public inDistributionMode;
-    uint public amountToDistribute;
-    uint public totalTokens;
-    uint public weiPerToken;
-
-    function ReturnWallet(address _mgmtAddress) OwnedAccount(msg.sender){
-        mgmtAddress = _mgmtAddress;
-    }
-
-    function payManagementBodyPercent(uint _percent) {
-        // TODO
-        payOutPercentage(mgmtAddress, _percent);
-    }
-
-    function switchToDistributionMode(uint _totalTokens) onlyOwner {
-        inDistributionMode = true;
-        acceptDeposits = false;
-        totalTokens = _totalTokens;
-        amountToDistribute = this.balance;
-        weiPerToken = amountToDistribute / totalTokens;
-    }
-
-    function payTokenHolderBasedOnTokenCount(address _tokenHolderAddress, uint _tokens) onlyOwner {
-        // TODO
-        payOutAmount(_tokenHolderAddress, weiPerToken * _tokens);
-    }
-}
-
 /**
  * Gamma Fund ICO contract.
  *
@@ -217,8 +153,6 @@ contract GammaToken is StandardToken, SafeMath {
     // signer address (for clickwrap agreement)
     // see function() {} for comments
     address public signer = 0x0;
-
-    ReturnWallet public returnWallet;
 
     uint public closingTime;
     uint public weiPerInitialGammaToken = 10**16;
@@ -244,16 +178,20 @@ contract GammaToken is StandardToken, SafeMath {
     bool public isDistributionInProgress;
     bool public isDistributionReady;
     bool public isFundLocked;
-    // bool public isFundReleased;
 
-    uint public icoTokenSupply = 0; //this will keep track of the token supply created during the crowdsale
     uint public icoEtherRaised = 0; //this will keep track of the Ether raised during the crowdsale
     uint256 public bountyTokensCreated;
 
     event Buy(address indexed sender, uint eth, uint fbt);
+
+    // TODO no refund yet
     event Refund(address indexed sender, address to, uint eth);
-    event Freeze(address indexed sender, uint eth);
-    event Harvest(address indexed sender, uint eth);
+    event VoteFreeze(address indexed sender, uint eth);
+    event VoteHarvest(address indexed sender, uint eth);
+    event HarvestMyReturn(address indexed sender, uint eth);
+    event MgmtMoveFund(address indexed sender, uint eth, address to, uint amount_to_move);
+    event MgmtDistributed(address indexed sender);
+    event MgmtIssueBountyToken(address indexed msg_sender, address _recipientAddress, uint _amount, bool _success);
 
     modifier notLocked() {
         require(!isFundLocked);
@@ -287,10 +225,21 @@ contract GammaToken is StandardToken, SafeMath {
         require(msg.value > 0);
         _;
     }
-    modifier onlyCanIssueBountyToken(uint _amount) {
-        require(bountyTokensCreated + _amount <= maxBountyTokens);
-        _;
-    }
+
+
+
+    // uint public etherCap = 500000 * 10**18; //max amount raised during crowdsale (5.5M USD worth of ether will be measured with market price at beginning of the crowdsale)
+    // uint public transferLockup = 370285; //transfers are locked for this many blocks after endBlock (assuming 14 second blocks, this is 2 months)
+    // uint public founderLockup = 2252571; //founder allocation cannot be created until this many blocks after endBlock (assuming 14 second blocks, this is 1 year)
+    // uint public bountyAllocation = 2500000 * 10**18; //2.5M tokens allocated post-crowdsale for the bounty fund
+    // uint public ecosystemAllocation = 5 * 10**16; //5% of token supply allocated post-crowdsale for the ecosystem fund
+    // uint public founderAllocation = 10 * 10**16; //10% of token supply allocated post-crowdsale for the founder allocation
+    // bool public bountyAllocated = false; //this will change to true when the bounty fund is allocated
+    // bool public ecosystemAllocated = false; //this will change to true when the ecosystem fund is allocated
+    // bool public founderAllocated = false; //this will change to true when the founder fund is allocated
+
+    // event AllocateFounderTokens(address indexed sender);
+    // event AllocateBountyAndEcosystemTokens(address indexed sender);
 
 
 
@@ -298,7 +247,6 @@ contract GammaToken is StandardToken, SafeMath {
         mgmt = managementAddressInput;
         signer = signerInput;
 
-        returnWallet = new ReturnWallet(mgmt);
     }
 
     function getCurrentTier() constant returns (uint8) {
@@ -317,30 +265,6 @@ contract GammaToken is StandardToken, SafeMath {
         return weiPerInitialGammaToken * (100 + getCurrentTier() * 5) / 100;
     }
 
-    function mgmtMoveFund(
-        address _recipientAddress,
-        uint _amount
-    ) noEther onlyManagementBody onlyLocked onlyDistributionNotReady {
-
-    }
-
-    function mgmtDistributeReturn() noEther onlyManagementBody onlyLocked onlyDistributionNotReady {
-
-    }
-
-    function mgmtIssueBountyToken(
-        address _recipientAddress,
-        uint _amount
-    ) noEther onlyManagementBody onlyLocked onlyCanIssueBountyToken(_amount) returns (bool){
-        // send token to the specified address
-        balances[_recipientAddress] += _amount;
-        bountyTokensCreated += _amount;
-
-        // event
-        // evMgmtIssueBountyToken(msg.sender, msg.value, _recipientAddress, _amount, true);
-
-    }
-
     /**
      * Emergency Stop ICO.
      *
@@ -354,7 +278,56 @@ contract GammaToken is StandardToken, SafeMath {
     }
 
     /**
-     * Post-ICO operations
+     * Post-ICO mgmt operations
+     *
+     */
+
+    // NOTE:  This function is a @hasEther modifier so that mgmt is required
+    //        to send ETH to trigger call to this contract.
+    function mgmtMoveFund(
+        address _recipientAddress,
+        uint _amount
+    ) hasEther onlyManagementBody onlyLocked onlyDistributionNotReady {
+
+        // end the operation if the amount is larger than current balance
+        if(_amount > this.balance){
+            return;
+        }
+
+        // send the balance (_amount) to _recipientAddress
+        if (!_recipientAddress.call.value(_amount)()) {
+            return;
+        }
+
+        MgmtMoveFund(msg.sender, msg.value, _recipientAddress, _amount);
+    }
+
+    function mgmtDistributeReturn() noEther onlyManagementBody onlyLocked onlyDistributionNotReady {
+
+        isDistributionReady = true;
+
+        MgmtDistributed(msg.sender);
+    }
+
+    function mgmtIssueBountyToken(
+        address _recipientAddress,
+        uint _amount
+    ) noEther onlyManagementBody onlyLocked returns (bool){
+
+        // fail when attempts to issue too much bounty tokens
+        if(bountyTokensCreated + _amount > maxBountyTokens){
+            throw;
+        }
+
+        // send token to the specified address
+        balances[_recipientAddress] += _amount;
+        bountyTokensCreated += _amount;
+
+        MgmtIssueBountyToken(msg.sender, _recipientAddress, _amount, true);
+    }
+
+    /**
+     * Post-ICO token holder operations
      *
      */
     function voteToFreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
@@ -363,16 +336,17 @@ contract GammaToken is StandardToken, SafeMath {
         supportFreezeQuorum += balances[msg.sender];
         votedFreeze[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((icoTokenSupply + bountyTokensCreated) * freezeQuorumPercent) / 100;
+        uint threshold = ((totalSupply + bountyTokensCreated) * freezeQuorumPercent) / 100;
         if(supportFreezeQuorum > threshold){
-            isFreezeEnabled = true;
             _executeFreezeFund();
-            Freeze(msg.sender, msg.value);
+            VoteFreeze(msg.sender, msg.value);
         }
     }
 
     function _executeFreezeFund() internal onlyDistributionNotReady {
-        // TODO
+
+        isFreezeEnabled = true;
+        isDistributionReady = true;
     }
 
     function voteToUnfreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
@@ -387,22 +361,48 @@ contract GammaToken is StandardToken, SafeMath {
         supportHarvestQuorum += balances[msg.sender];
         votedHarvest[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((icoTokenSupply + bountyTokensCreated) * harvestQuorumPercent) / 100;
+        uint threshold = ((totalSupply + bountyTokensCreated) * harvestQuorumPercent) / 100;
         if(supportHarvestQuorum > threshold) {
             isHarvestEnabled = true;
-            Harvest(msg.sender, msg.value);
+            VoteHarvest(msg.sender, msg.value);
         }
     }
 
     function harvestMyReturn() noEther onlyTokenHolders onlyLocked onlyDistributionReady {
 
         uint tokens = balances[msg.sender];
+        // ETH amount to return:
+        //    (User token balance) * (contract remaining balance) / (total tokens)
+        uint _amount = tokens * this.balance / (totalSupply + bountyTokensCreated);
+
         balances[msg.sender] = 0;
 
-        // TODO
-        returnWallet.payTokenHolderBasedOnTokenCount(msg.sender, tokens);
+        if (!msg.sender.send(_amount)) {
+            return;
+        }
+
+        HarvestMyReturn(msg.sender, _amount);
     }
 
+    /**
+     * Security review
+     *
+     * - Integer overflow: does not apply, blocknumber can't grow that high
+     * - Division is the last operation and constant, should not cause issues
+     * - Price function plotted https://github.com/Firstbloodio/token/issues/2
+     */
+    // function price() constant returns(uint) {
+    //     if (block.number>=startBlock && block.number<startBlock+250) return 170; //power hour
+    //     if (block.number<startBlock || block.number>endBlock) return 100; //default price
+    //     return 100 + 4 * (endBlock - block.number)/(endBlock - startBlock + 1)*67/4; //crowdsale price
+    // }
+
+    // // price() exposed for unit tests
+    // function testPrice(uint blockNumber) constant returns(uint) {
+    //     if (blockNumber>=startBlock && blockNumber<startBlock+250) return 170; //power hour
+    //     if (blockNumber<startBlock || blockNumber>endBlock) return 100; //default price
+    //     return 100 + 4*(endBlock - blockNumber)/(endBlock - startBlock + 1)*67/4; //crowdsale price
+    // }
 
     // Buy entry point
     function buy(uint8 v, bytes32 r, bytes32 s) {
@@ -448,6 +448,62 @@ contract GammaToken is StandardToken, SafeMath {
 
         Buy(recipient, msg.value, tokens);
     }
+
+    /**
+     * Set up founder address token balance.
+     *
+     * allocateBountyAndEcosystemTokens() must be calld first.
+     *
+     * Security review
+     *
+     * - Integer math: ok - only called once with fixed parameters
+     *
+     * Applicable tests:
+     *
+     * - Test bounty and ecosystem allocation
+     * - Test bounty and ecosystem allocation twice
+     *
+     */
+    // function allocateFounderTokens() {
+    //     if (msg.sender!=founder) throw;
+    //     if (block.number <= endBlock + founderLockup) throw;
+    //     if (founderAllocated) throw;
+    //     if (!bountyAllocated || !ecosystemAllocated) throw;
+    //     balances[founder] = safeAdd(balances[founder], icoTokenSupply * founderAllocation / (1 ether));
+    //     totalSupply = safeAdd(totalSupply, icoTokenSupply * founderAllocation / (1 ether));
+    //     founderAllocated = true;
+    //     AllocateFounderTokens(msg.sender);
+    // }
+
+    /**
+     * Set up founder address token balance.
+     *
+     * Set up bounty pool.
+     *
+     * Security review
+     *
+     * - Integer math: ok - only called once with fixed parameters
+     *
+     * Applicable tests:
+     *
+     * - Test founder token allocation too early
+     * - Test founder token allocation on time
+     * - Test founder token allocation twice
+     *
+     */
+    // function allocateBountyAndEcosystemTokens() {
+    //     if (msg.sender!=founder) throw;
+    //     if (block.number <= endBlock) throw;
+    //     if (bountyAllocated || ecosystemAllocated) throw;
+    //     icoTokenSupply = totalSupply;
+    //     balances[founder] = safeAdd(balances[founder], icoTokenSupply * ecosystemAllocation / (1 ether));
+    //     totalSupply = safeAdd(totalSupply, icoTokenSupply * ecosystemAllocation / (1 ether));
+    //     balances[founder] = safeAdd(balances[founder], bountyAllocation);
+    //     totalSupply = safeAdd(totalSupply, bountyAllocation);
+    //     bountyAllocated = true;
+    //     ecosystemAllocated = true;
+    //     AllocateBountyAndEcosystemTokens(msg.sender);
+    // }
 
     /**
      * Emergency Stop ICO.
