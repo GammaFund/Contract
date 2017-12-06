@@ -181,13 +181,14 @@ contract GammaToken is StandardToken, SafeMath {
 
     uint public icoEtherRaised = 0; //this will keep track of the Ether raised during the crowdsale
     uint256 public bountyTokensCreated;
+    uint256 public balanceForDistribution;
 
     event Buy(address indexed sender, uint eth, uint fbt);
 
     // TODO no refund yet
     event Refund(address indexed sender, address to, uint eth);
-    event VoteFreeze(address indexed sender, uint eth);
-    event VoteHarvest(address indexed sender, uint eth);
+    event Freeze(address indexed sender, uint eth);
+    event Harvest(address indexed sender, uint eth);
     event HarvestMyReturn(address indexed sender, uint eth);
     event MgmtMoveFund(address indexed sender, uint eth, address to, uint amount_to_move);
     event MgmtDistributed(address indexed sender);
@@ -265,6 +266,14 @@ contract GammaToken is StandardToken, SafeMath {
         return weiPerInitialGammaToken * (100 + getCurrentTier() * 5) / 100;
     }
 
+    function refund() onlyTokenHolders notLocked{
+        // TODO
+        // return eth sent from token balances
+
+        // set address balance to 0
+
+    }
+
     /**
      * Emergency Stop ICO.
      *
@@ -315,13 +324,13 @@ contract GammaToken is StandardToken, SafeMath {
     ) noEther onlyManagementBody onlyLocked returns (bool){
 
         // fail when attempts to issue too much bounty tokens
-        if(bountyTokensCreated + _amount > maxBountyTokens){
+        if(safeAdd(bountyTokensCreated, _amount) > maxBountyTokens){
             throw;
         }
 
         // send token to the specified address
-        balances[_recipientAddress] += _amount;
-        bountyTokensCreated += _amount;
+        balances[_recipientAddress] = safeAdd(balances[_recipientAddress], _amount);
+        bountyTokensCreated = safeAdd(bountyTokensCreated, _amount);
 
         MgmtIssueBountyToken(msg.sender, _recipientAddress, _amount, true);
     }
@@ -332,39 +341,41 @@ contract GammaToken is StandardToken, SafeMath {
      */
     function voteToFreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
 
-        supportFreezeQuorum -= votedFreeze[msg.sender];
-        supportFreezeQuorum += balances[msg.sender];
+        supportFreezeQuorum = safeSub(supportFreezeQuorum, votedFreeze[msg.sender]);
+        supportFreezeQuorum = safeAdd(supportFreezeQuorum, balances[msg.sender]);
         votedFreeze[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((totalSupply + bountyTokensCreated) * freezeQuorumPercent) / 100;
+        uint threshold = (safeAdd(totalSupply, bountyTokensCreated) * freezeQuorumPercent) / 100;
         if(supportFreezeQuorum > threshold){
-            _executeFreezeFund();
-            VoteFreeze(msg.sender, msg.value);
+
+            balanceForDistribution = this.balance;
+            isFreezeEnabled = true;
+            isDistributionReady = true;
+
+            Freeze(msg.sender, msg.value);
         }
-    }
-
-    function _executeFreezeFund() internal onlyDistributionNotReady {
-
-        isFreezeEnabled = true;
-        isDistributionReady = true;
     }
 
     function voteToUnfreezeFund() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
 
-        supportFreezeQuorum -= votedFreeze[msg.sender];
+        supportFreezeQuorum = safeSub(supportFreezeQuorum, votedFreeze[msg.sender]);
         votedFreeze[msg.sender] = 0;
     }
 
     function voteToHarvest() noEther onlyTokenHolders onlyLocked onlyDistributionNotReady {
 
-        supportHarvestQuorum -= votedHarvest[msg.sender];
-        supportHarvestQuorum += balances[msg.sender];
+        supportHarvestQuorum = safeSub(supportHarvestQuorum, votedHarvest[msg.sender]);
+        supportHarvestQuorum = safeAdd(supportHarvestQuorum, balances[msg.sender]);
+
         votedHarvest[msg.sender] = balances[msg.sender];
 
-        uint threshold = ((totalSupply + bountyTokensCreated) * harvestQuorumPercent) / 100;
+        uint threshold = (safeAdd(totalSupply, bountyTokensCreated) * harvestQuorumPercent) / 100;
         if(supportHarvestQuorum > threshold) {
+
             isHarvestEnabled = true;
-            VoteHarvest(msg.sender, msg.value);
+            balanceForDistribution = this.balance;
+
+            Harvest(msg.sender, msg.value);
         }
     }
 
@@ -372,8 +383,8 @@ contract GammaToken is StandardToken, SafeMath {
 
         uint tokens = balances[msg.sender];
         // ETH amount to return:
-        //    (User token balance) * (contract remaining balance) / (total tokens)
-        uint _amount = tokens * this.balance / (totalSupply + bountyTokensCreated);
+        //    (User token balance) * (contract balance for distribution) / (total tokens)
+        uint _amount = safeMul(tokens, balanceForDistribution) / safeAdd(totalSupply, bountyTokensCreated);
 
         balances[msg.sender] = 0;
 
@@ -431,7 +442,7 @@ contract GammaToken is StandardToken, SafeMath {
      */
     function buyRecipient(address recipient, uint8 v, bytes32 r, bytes32 s) {
         bytes32 hash = sha256(msg.sender);
-        if (ecrecover(hash,v,r,s) != signer) throw;
+        if (ecrecover(hash, v, r, s) != signer) throw;
         if (halted) throw;
         // if (safeAdd(icoEtherRaised, msg.value) > etherCap || halted) throw;
         uint tokens = safeMul(msg.value, pricePerTokenAtCurrentTier());
