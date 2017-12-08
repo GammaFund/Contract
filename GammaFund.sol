@@ -88,7 +88,7 @@ contract StandardToken is Token {
         //If your token leaves out totalSupply and can issue more tokens as time goes on, you need to check if it doesn't wrap.
         //Replace the if with this one instead.
         if (balances[msg.sender] >= _value && balances[_to] + _value > balances[_to]) {
-        //if (balances[msg.sender] >= _value && _value > 0) {
+
             balances[msg.sender] -= _value;
             balances[_to] += _value;
             Transfer(msg.sender, _to, _value);
@@ -99,7 +99,7 @@ contract StandardToken is Token {
     function transferFrom(address _from, address _to, uint256 _value) returns (bool success) {
         //same as above. Replace this line with the following if you want to protect against wrapping uints.
         if (balances[_from] >= _value && allowed[_from][msg.sender] >= _value && balances[_to] + _value > balances[_to]) {
-        //if (balances[_from] >= _value && allowed[_from][msg.sender] >= _value && _value > 0) {
+
             balances[_to] += _value;
             balances[_from] -= _value;
             allowed[_from][msg.sender] -= _value;
@@ -180,13 +180,14 @@ contract GammaToken is StandardToken, SafeMath {
     bool public isFundLocked;
 
     uint public icoEtherRaised = 0; //this will keep track of the Ether raised during the crowdsale
+    mapping (address => uint) public etherReceived;
     uint256 public bountyTokensCreated;
     uint256 public balanceForDistribution;
 
     event Buy(address indexed sender, uint eth, uint fbt);
 
     // TODO no refund yet
-    event Refund(address indexed sender, address to, uint eth);
+    event Refund(address indexed sender, uint eth);
     event Freeze(address indexed sender, uint eth);
     event Harvest(address indexed sender, uint eth);
     event HarvestMyReturn(address indexed sender, uint eth);
@@ -228,22 +229,6 @@ contract GammaToken is StandardToken, SafeMath {
     }
 
 
-
-    // uint public etherCap = 500000 * 10**18; //max amount raised during crowdsale (5.5M USD worth of ether will be measured with market price at beginning of the crowdsale)
-    // uint public transferLockup = 370285; //transfers are locked for this many blocks after endBlock (assuming 14 second blocks, this is 2 months)
-    // uint public founderLockup = 2252571; //founder allocation cannot be created until this many blocks after endBlock (assuming 14 second blocks, this is 1 year)
-    // uint public bountyAllocation = 2500000 * 10**18; //2.5M tokens allocated post-crowdsale for the bounty fund
-    // uint public ecosystemAllocation = 5 * 10**16; //5% of token supply allocated post-crowdsale for the ecosystem fund
-    // uint public founderAllocation = 10 * 10**16; //10% of token supply allocated post-crowdsale for the founder allocation
-    // bool public bountyAllocated = false; //this will change to true when the bounty fund is allocated
-    // bool public ecosystemAllocated = false; //this will change to true when the ecosystem fund is allocated
-    // bool public founderAllocated = false; //this will change to true when the founder fund is allocated
-
-    // event AllocateFounderTokens(address indexed sender);
-    // event AllocateBountyAndEcosystemTokens(address indexed sender);
-
-
-
     function GammaToken(address managementAddressInput, address signerInput) {
         mgmt = managementAddressInput;
         signer = signerInput;
@@ -266,11 +251,25 @@ contract GammaToken is StandardToken, SafeMath {
         return weiPerInitialGammaToken * (100 + getCurrentTier() * 5) / 100;
     }
 
-    function refund() onlyTokenHolders notLocked{
-        // TODO
+    function refund() onlyTokenHolders notLocked noEther{
+        if(etherReceived[msg.sender] == 0){
+            throw;
+        }
+
         // return eth sent from token balances
+        uint sender_balance = etherReceived[msg.sender];
 
         // set address balance to 0
+        etherReceived[msg.sender] = 0;
+        icoEtherRaised = safeSub(icoEtherRaised, sender_balance);
+
+        // return etherReceived[msg.sender] to msg.sender
+        totalSupply = safeSub(totalSupply, sender_balance);
+        balances[msg.sender] = 0;
+
+        if (!msg.sender.call.value(sender_balance)()) throw; //immediately send Ether to sender address
+
+        Refund(msg.sender, sender_balance);
 
     }
 
@@ -395,25 +394,7 @@ contract GammaToken is StandardToken, SafeMath {
         HarvestMyReturn(msg.sender, _amount);
     }
 
-    /**
-     * Security review
-     *
-     * - Integer overflow: does not apply, blocknumber can't grow that high
-     * - Division is the last operation and constant, should not cause issues
-     * - Price function plotted https://github.com/Firstbloodio/token/issues/2
-     */
-    // function price() constant returns(uint) {
-    //     if (block.number>=startBlock && block.number<startBlock+250) return 170; //power hour
-    //     if (block.number<startBlock || block.number>endBlock) return 100; //default price
-    //     return 100 + 4 * (endBlock - block.number)/(endBlock - startBlock + 1)*67/4; //crowdsale price
-    // }
 
-    // // price() exposed for unit tests
-    // function testPrice(uint blockNumber) constant returns(uint) {
-    //     if (blockNumber>=startBlock && blockNumber<startBlock+250) return 170; //power hour
-    //     if (blockNumber<startBlock || blockNumber>endBlock) return 100; //default price
-    //     return 100 + 4*(endBlock - blockNumber)/(endBlock - startBlock + 1)*67/4; //crowdsale price
-    // }
 
     // Buy entry point
     function buy(uint8 v, bytes32 r, bytes32 s) {
@@ -447,6 +428,7 @@ contract GammaToken is StandardToken, SafeMath {
         // if (safeAdd(icoEtherRaised, msg.value) > etherCap || halted) throw;
         uint tokens = safeMul(msg.value, pricePerTokenAtCurrentTier());
         balances[recipient] = safeAdd(balances[recipient], tokens);
+        etherReceived[recipient] = safeAdd(etherReceived[recipient], msg.value);
         totalSupply = safeAdd(totalSupply, tokens);
         icoEtherRaised = safeAdd(icoEtherRaised, msg.value);
 
@@ -459,62 +441,6 @@ contract GammaToken is StandardToken, SafeMath {
 
         Buy(recipient, msg.value, tokens);
     }
-
-    /**
-     * Set up founder address token balance.
-     *
-     * allocateBountyAndEcosystemTokens() must be calld first.
-     *
-     * Security review
-     *
-     * - Integer math: ok - only called once with fixed parameters
-     *
-     * Applicable tests:
-     *
-     * - Test bounty and ecosystem allocation
-     * - Test bounty and ecosystem allocation twice
-     *
-     */
-    // function allocateFounderTokens() {
-    //     if (msg.sender!=founder) throw;
-    //     if (block.number <= endBlock + founderLockup) throw;
-    //     if (founderAllocated) throw;
-    //     if (!bountyAllocated || !ecosystemAllocated) throw;
-    //     balances[founder] = safeAdd(balances[founder], icoTokenSupply * founderAllocation / (1 ether));
-    //     totalSupply = safeAdd(totalSupply, icoTokenSupply * founderAllocation / (1 ether));
-    //     founderAllocated = true;
-    //     AllocateFounderTokens(msg.sender);
-    // }
-
-    /**
-     * Set up founder address token balance.
-     *
-     * Set up bounty pool.
-     *
-     * Security review
-     *
-     * - Integer math: ok - only called once with fixed parameters
-     *
-     * Applicable tests:
-     *
-     * - Test founder token allocation too early
-     * - Test founder token allocation on time
-     * - Test founder token allocation twice
-     *
-     */
-    // function allocateBountyAndEcosystemTokens() {
-    //     if (msg.sender!=founder) throw;
-    //     if (block.number <= endBlock) throw;
-    //     if (bountyAllocated || ecosystemAllocated) throw;
-    //     icoTokenSupply = totalSupply;
-    //     balances[founder] = safeAdd(balances[founder], icoTokenSupply * ecosystemAllocation / (1 ether));
-    //     totalSupply = safeAdd(totalSupply, icoTokenSupply * ecosystemAllocation / (1 ether));
-    //     balances[founder] = safeAdd(balances[founder], bountyAllocation);
-    //     totalSupply = safeAdd(totalSupply, bountyAllocation);
-    //     bountyAllocated = true;
-    //     ecosystemAllocated = true;
-    //     AllocateBountyAndEcosystemTokens(msg.sender);
-    // }
 
     /**
      * Emergency Stop ICO.
